@@ -118,6 +118,127 @@ OUTER:
 	}
 }
 
+func TestMonitor_Monitor_RemoteServer_ForwardRegion(t *testing.T) {
+	t.Parallel()
+
+	// start servers
+	s1, cleanupS1 := TestServer(t, nil)
+	defer cleanupS1()
+	s2, cleanupS2 := TestServer(t, func(c *Config) {
+		c.DevDisableBootstrap = true
+		c.Region = "bar"
+	})
+
+	defer cleanupS2()
+	TestJoin(t, s1, s2)
+	testutil.WaitForLeader(t, s1.RPC)
+	testutil.WaitForLeader(t, s2.RPC)
+
+	cases := []struct {
+		desc        string
+		serverID    string
+		expectedLog string
+		logger      hclog.InterceptLogger
+		origin      *Server
+	}{
+		{
+			desc:        "remote leader",
+			serverID:    s2.serf.LocalMember().Name,
+			expectedLog: "region bar log",
+			logger:      s2.logger,
+			origin:      s1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			require := require.New(t)
+
+			// send some specific logs
+			doneCh := make(chan struct{})
+			go func() {
+				for {
+					select {
+					case <-doneCh:
+						return
+					default:
+						tc.logger.Warn(tc.expectedLog)
+						time.Sleep(10 * time.Millisecond)
+					}
+				}
+			}()
+
+			req := cstructs.MonitorRequest{
+				LogLevel: "warn",
+				ServerID: tc.serverID,
+				QueryOptions: structs.QueryOptions{
+					Region: "bar",
+				},
+			}
+
+			handler, err := tc.origin.StreamingRpcHandler("Agent.Monitor")
+			require.Nil(err)
+
+			// create pipe
+			p1, p2 := net.Pipe()
+			defer p1.Close()
+			defer p2.Close()
+
+			errCh := make(chan error)
+			streamMsg := make(chan *cstructs.StreamErrWrapper)
+
+			go handler(p2)
+
+			// Start decoder
+			go func() {
+				decoder := codec.NewDecoder(p1, structs.MsgpackHandle)
+				for {
+					var msg cstructs.StreamErrWrapper
+					if err := decoder.Decode(&msg); err != nil {
+						if err == io.EOF || strings.Contains(err.Error(), "closed") {
+							return
+						}
+						errCh <- fmt.Errorf("error decoding: %v", err)
+					}
+
+					streamMsg <- &msg
+				}
+			}()
+
+			// send request
+			encoder := codec.NewEncoder(p1, structs.MsgpackHandle)
+			require.Nil(encoder.Encode(req))
+
+			timeout := time.After(2 * time.Second)
+			received := ""
+
+		OUTER:
+			for {
+				select {
+				case <-timeout:
+					t.Fatal("timeout waiting for logs")
+				case err := <-errCh:
+					t.Fatal(err)
+				case msg := <-streamMsg:
+					if msg.Error != nil {
+						t.Fatalf("Got error: %v", msg.Error.Error())
+					}
+
+					var frame sframer.StreamFrame
+					err := json.Unmarshal(msg.Payload, &frame)
+					assert.NoError(t, err)
+
+					received += string(frame.Data)
+					if strings.Contains(received, tc.expectedLog) {
+						close(doneCh)
+						require.Nil(p2.Close())
+						break OUTER
+					}
+				}
+			}
+		})
+	}
+}
 func TestMonitor_Monitor_RemoteServer(t *testing.T) {
 	t.Parallel()
 
@@ -127,6 +248,7 @@ func TestMonitor_Monitor_RemoteServer(t *testing.T) {
 	s2, cleanupS2 := TestServer(t, func(c *Config) {
 		c.DevDisableBootstrap = true
 	})
+
 	defer cleanupS2()
 	TestJoin(t, s1, s2)
 	testutil.WaitForLeader(t, s1.RPC)
