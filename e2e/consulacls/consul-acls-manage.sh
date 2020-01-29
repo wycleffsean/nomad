@@ -24,7 +24,7 @@ linux_clients=$(jq -r .outputs.linux_clients.value[] <"${tfstatefile}" | xargs)
 windows_clients=$(jq -r .outputs.windows_clients.value[] <"${tfstatefile}" | xargs)
 
 # Combine all the clients together
-clients="${linux_clients} ${windows_clients}"
+# clients="${linux_clients} ${windows_clients}"
 
 # Load Server Node IPs from terraform/terraform.tfstate
 servers=$(jq -r .outputs.servers.value[] <"${tfstatefile}" | xargs)
@@ -181,12 +181,39 @@ function doBootstrap() {
   echo "=== Activate: DONE ==="
 }
 
-function doEnable() {
+function doSetAllowUnauthenticated {
+  value="${1}"
+  [ "${value}" == "true" ] || [ "${value}" == "false" ] || ( echo "allow_unauthenticated must be 'true' or 'false'" && exit 1)
+  for server in ${servers}; do
+    if [ "${value}" == "true" ]; then
+      echo "---> setting consul.allow_unauthenticated=true on ${server}"
+      doSSH "${server}" "sudo sed -i 's/allow_unauthenticated = false/allow_unauthenticated = true/g' ${nomad_configs}/nomad-server-consul.hcl"
+    else
+      echo "---> setting consul.allow_unauthenticated=false on ${server}"
+      doSSH "${server}" "sudo sed -i 's/allow_unauthenticated = true/allow_unauthenticated = false/g' ${nomad_configs}/nomad-server-consul.hcl"
+    fi
+    doSSH "${server}" "sudo systemctl restart nomad"
+  done
+
+  for linux_client in ${linux_clients}; do
+    if [ "${value}" == "true" ]; then
+      echo "---> comment out consul token for Nomad client ${linux_client}"
+      doSSH "${linux_client}" "sudo sed -i 's!token =!// token =!g' ${nomad_configs}/nomad-client-consul.hcl"
+    else
+      echo "---> un-comment consul token for Nomad client ${linux_client}"
+      doSSH "${linux_client}" "sudo sed -i 's!// token =!token =!g' ${nomad_configs}/nomad-client-consul.hcl"
+    fi
+    doSSH "${linux_client}" "sudo systemctl restart nomad"
+  done
+}
+
+function doEnable {
   if [ ! -f "${token_file}" ]; then
     echo "ENABLE: token file does not exist, doing a full ACL bootstrap"
     doBootstrap
   else
     echo "ENABLE: token file already exists, will activate ACLs"
+    doSetAllowUnauthenticated "false"
     doActivateACLs
   fi
 
@@ -206,6 +233,7 @@ function doDisable {
     exit 1
   else
     echo "DISABLE: token file exists, will deactivate ACLs"
+    doSetAllowUnauthenticated "true"
     doDeactivateACLs
   fi
 

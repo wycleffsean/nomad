@@ -1,6 +1,7 @@
 package connect
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -186,10 +187,14 @@ func (tc *ConnectACLsE2ETest) TestConnectACLsRegisterMasterToken(f *framework.F)
 	// https://www.consul.io/docs/acl/acl-system.html#builtin-tokens
 	job.ConsulToken = &tc.consulMasterToken
 
-	resp, _, err := jobAPI.Register(job, nil)
+	// Avoid using Register here, because that would actually create and run the
+	// Job which runs the task, creates the SI token, which all needs to be
+	// given time to settle and cleaned up. That is all covered in the big slow
+	// test at the bottom.
+	resp, _, err := jobAPI.Plan(job, false, nil)
 	r.NoError(err)
 	r.NotNil(resp)
-	r.Zero(resp.Warnings)
+	fmt.Println("resp:", resp)
 }
 
 func (tc *ConnectACLsE2ETest) TestConnectACLsRegisterMissingOperatorToken(f *framework.F) {
