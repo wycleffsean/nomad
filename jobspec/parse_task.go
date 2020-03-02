@@ -290,6 +290,7 @@ func parseTask(item *ast.ObjectItem) (*api.Task, error) {
 		valid := []string{
 			"hook",
 			"block_until",
+			"lifetime",
 		}
 		if err := helper.CheckHCLKeys(lifecycleBlock.Val, valid); err != nil {
 			return nil, multierror.Prefix(err, "lifecycle ->")

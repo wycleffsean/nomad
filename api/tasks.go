@@ -600,16 +600,19 @@ const (
 	TaskLifecycleHookPrestart        = "prestart"
 	TaskLifecycleBlockUntilRunning   = "running"
 	TaskLifecycleBlockUntilCompleted = "completed"
+	TaskLifecycleLifetimeSidecar     = "sidecar"
+	TaskLifecycleLifetimeRunOnce     = "run-once"
 )
 
 type TaskLifecycle struct {
 	Hook       string `mapstructure:"hook"`
 	BlockUntil string `mapstructure:"block_until"`
+	Lifetime   string `mapstructure:"lifetime"`
 }
 
 // Determine if lifecycle has user-input values
 func (l *TaskLifecycle) Empty() bool {
-	return l == nil || (l.Hook == "" && l.BlockUntil == "")
+	return l == nil || (l.Hook == "" && l.BlockUntil == "" && l.Lifetime == "")
 }
 
 // Task is a single process in a task group.
@@ -671,6 +674,17 @@ func (t *Task) Canonicalize(tg *TaskGroup, job *Job) {
 	}
 	if t.Lifecycle.Empty() {
 		t.Lifecycle = nil
+	} else {
+		t.Lifecycle.Canonicalize()
+	}
+}
+
+func (l *TaskLifecycle) Canonicalize() {
+	if l.Lifetime == TaskLifecycleLifetimeSidecar {
+		l.BlockUntil = TaskLifecycleBlockUntilRunning
+	} else {
+		l.Lifetime = TaskLifecycleLifetimeRunOnce
+		l.BlockUntil = TaskLifecycleBlockUntilCompleted
 	}
 }
 

@@ -4466,11 +4466,14 @@ const (
 	TaskLifecycleHookPrestart        = "prestart"
 	TaskLifecycleBlockUntilRunning   = "running"
 	TaskLifecycleBlockUntilCompleted = "completed"
+	TaskLifecycleLifetimeSidecar     = "sidecar"
+	TaskLifecycleLifetimeRunOnce     = "run-once"
 )
 
 type TaskLifecycleConfig struct {
 	Hook       string
 	BlockUntil string
+	Lifetime   string
 }
 
 func (d *TaskLifecycleConfig) Copy() *TaskLifecycleConfig {
